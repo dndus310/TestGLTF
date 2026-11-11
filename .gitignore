@@ -1,0 +1,23 @@
+# Unreal: generated and local-only folders (not part of a project zip)
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+Plugins/*/Saved/
+
+# IDE and generated project files
+.vs/
+.idea/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# dwo-Forge (attached locally, never committed)
+__dwo-forge/
+__dwo-forge.bat
+Plugins/__*/
