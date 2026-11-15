@@ -16,9 +16,6 @@ class DWO_PROJ_01_API UAttributeAssetListWidget : public UUserWidget
 {
 	GENERATED_BODY()
 
-	/** Editor tool that writes BuildDefaultLayout() into the Widget Blueprint designer tree. */
-	friend class FAttributeWidgetDesignerExporter;
-
 public:
 	UFUNCTION(BlueprintCallable, Category = "Attribute|UI")
 	void SetItems(const TArray<UAttributeAssetItem*>& Items);

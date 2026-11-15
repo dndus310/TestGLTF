@@ -35,21 +35,6 @@ UE 5.7 샘플: DataTable 기반 Attribute 목록 → 뷰포트 스폰, 그리고
 코드: `Source/DWO_Proj_01/AttributeSample/`
 
 - 위젯 레이아웃은 WBP 디자이너 탭에 들어 있습니다. 런타임에는 같은 이름의 위젯(`Layer`, `BuildingTab`, `LoadTab`, `List`, `AddAttribute`, `Apply`, `ImportUserAsset` 등)이 `BindWidgetOptional`로 연결됩니다. 디자이너 트리가 비어 있을 때만 C++ 기본 레이아웃(`BuildDefaultLayout`)이 대신 쓰입니다.
-
-## C++ 레이아웃 → 디자이너 변환
-
-C++ 기본 레이아웃을 5개 WBP의 디자이너 트리로 써 넣는 에디터 도구입니다(`Source/DWO_Proj_01Editor`, 에디터 전용 모듈이라 패키지에는 들어가지 않음). 바인딩되는 위젯만 Is Variable로 설정하고, 컴파일과 저장까지 합니다.
-
-- 에디터 메뉴: **Tools > Attribute Sample > Export Widget Layouts to Designer**
-  - 기본: 디자이너 트리가 비어 있는 WBP만 씁니다.
-  - `(Overwrite)`: 디자이너에서 수정한 내용을 지우고 C++ 레이아웃으로 다시 씁니다(확인 창이 뜹니다).
-- 명령줄:
-
-```
-UnrealEditor-Cmd.exe DWO_Proj_01.uproject -run=AttributeWidgetDesignerExport [-Overwrite]
-```
-
-- Python: `unreal.AttributeWidgetDesignerLibrary.export_attribute_widgets_to_designer(False)`
 - `ThumbnailPath`가 비어 있으면 썸네일을 런타임에 렌더링합니다(`AAttributeThumbnailStudio`). 텍스처 경로(`/Game/...`)나 이미지 파일 경로를 넣어도 됩니다.
 - 사용자 파일 제한: 256MB 이하, 삼각형 300만 개 이하, `.gltf/.glb/.fbx`만 허용 (`UAttributeRuntimeMeshLoader`).
 

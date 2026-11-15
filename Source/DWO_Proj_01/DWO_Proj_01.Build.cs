@@ -28,6 +28,12 @@ public class DWO_Proj_01 : ModuleRules
 			"glTFRuntimeFBX"
 		});
 
+		// Asset server client (AttributeSample/AssetServerSubsystem): HttpModule + JSON
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"HTTP",
+			"Json"
+		});
+
 		// Ship the open source notices next to the executable (not inside the pak)
 		RuntimeDependencies.Add("$(ProjectDir)/Licenses/ThirdPartyNotices.txt", StagedFileType.NonUFS);
 

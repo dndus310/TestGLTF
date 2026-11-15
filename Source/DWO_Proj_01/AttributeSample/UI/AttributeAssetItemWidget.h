@@ -17,9 +17,6 @@ class DWO_PROJ_01_API UAttributeAssetItemWidget : public UUserWidget, public IUs
 {
 	GENERATED_BODY()
 
-	/** Editor tool that writes BuildDefaultLayout() into the Widget Blueprint designer tree. */
-	friend class FAttributeWidgetDesignerExporter;
-
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeOnListItemObjectSet(UObject* ListItemObject) override;

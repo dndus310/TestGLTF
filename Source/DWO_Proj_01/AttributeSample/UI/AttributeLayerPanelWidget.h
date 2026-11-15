@@ -22,9 +22,6 @@ class DWO_PROJ_01_API UAttributeLayerPanelWidget : public UUserWidget
 {
 	GENERATED_BODY()
 
-	/** Editor tool that writes BuildDefaultLayout() into the Widget Blueprint designer tree. */
-	friend class FAttributeWidgetDesignerExporter;
-
 public:
 	UFUNCTION(BlueprintCallable, Category = "Attribute|UI")
 	void SetLayer(EAttributeAssetType NewLayer);
