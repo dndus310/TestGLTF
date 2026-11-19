@@ -1,0 +1,9 @@
+# UE writes these when the commandlet runs
+ConvertProj/Content/
+ConvertProj/Config/
+ConvertProj/DerivedDataCache/
+ConvertProj/Intermediate/
+ConvertProj/Saved/
+output/
+check/
+*.log

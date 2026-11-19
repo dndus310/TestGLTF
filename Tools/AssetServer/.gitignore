@@ -1,0 +1,5 @@
+# local runtime data
+.venv/
+__pycache__/
+storage/
+assets.db
