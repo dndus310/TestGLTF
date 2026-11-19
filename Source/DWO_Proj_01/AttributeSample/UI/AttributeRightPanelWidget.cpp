@@ -12,6 +12,9 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Engine/World.h"
+#include "Misc/Paths.h"
+#include "TimerManager.h"
 
 void UAttributeRightPanelWidget::BuildDefaultLayout()
 {
@@ -49,6 +52,7 @@ void UAttributeRightPanelWidget::OnPanelInitialized()
 	{
 		AttributeAssetList->OnApplyClicked.AddUObject(this, &UAttributeRightPanelWidget::HandleApply);
 		AttributeAssetList->OnImportClicked.AddUObject(this, &UAttributeRightPanelWidget::HandleImportUserAsset);
+		AttributeAssetList->OnImportFilesDropped.AddUObject(this, &UAttributeRightPanelWidget::HandleImportFilesDropped);
 	}
 
 	if (UAttributeSampleSubsystem* Subsystem = GetSampleSubsystem())
@@ -114,25 +118,137 @@ void UAttributeRightPanelWidget::HandleImportUserAsset()
 		return;
 	}
 
-	FString FilePath;
-	if (!UAttributeRuntimeMeshLoader::OpenMeshFileDialog(FilePath))
+	TArray<FString> FilePaths;
+	if (!UAttributeRuntimeMeshLoader::OpenMeshFilesDialog(FilePaths))
 	{
 		return; // cancelled
 	}
+	QueueImport(FilePaths, 0);
+}
 
-	AttributeAssetList->SetStatus(TEXT("Loading..."));
-
-	FString Error;
-	UAttributeAssetItem* Imported = Subsystem->ImportUserAsset(FilePath, CurrentLayer, Error);
-	if (!Imported)
+void UAttributeRightPanelWidget::HandleImportFilesDropped(const TArray<FString>& AcceptedFiles, const TArray<FString>& RejectedFiles)
+{
+	if (AcceptedFiles.IsEmpty())
 	{
-		AttributeAssetList->SetStatus(FString::Printf(TEXT("Import failed: %s"), *Error), true);
+		if (AttributeAssetList)
+		{
+			AttributeAssetList->SetStatus(FString::Printf(TEXT("No supported files dropped (%d skipped). Use .gltf, .glb or .fbx."), RejectedFiles.Num()), true);
+		}
+		return;
+	}
+	QueueImport(AcceptedFiles, RejectedFiles.Num());
+}
+
+void UAttributeRightPanelWidget::QueueImport(const TArray<FString>& Files, int32 SkippedCount)
+{
+	UWorld* World = GetWorld();
+	if (!World || !AttributeAssetList || Files.IsEmpty())
+	{
 		return;
 	}
 
-	// The catalog broadcast already refreshed the tiles
-	AttributeAssetList->SelectItem(Imported);
-	AttributeAssetList->SetStatus(FString::Printf(TEXT("Imported '%s'. Press Apply to add it."), *Imported->Data.Name));
+	if (!bImportRunning)
+	{
+		// New batch (a drop during a running batch just extends it)
+		bImportRunning = true;
+		ImportLayer = CurrentLayer;
+		ImportTotal = ImportSucceeded = ImportSkipped = 0;
+		ImportErrors.Reset();
+		LastImported.Reset();
+		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateUObject(this, &UAttributeRightPanelWidget::ImportNextQueued));
+	}
+
+	ImportQueue.Append(Files);
+	ImportTotal += Files.Num();
+	ImportSkipped += SkippedCount;
+	AttributeAssetList->SetStatus(FString::Printf(TEXT("Importing %d/%d: %s ..."),
+		ImportTotal - ImportQueue.Num() + 1, ImportTotal, *FPaths::GetCleanFilename(ImportQueue[0])));
+}
+
+void UAttributeRightPanelWidget::ImportNextQueued()
+{
+	UAttributeSampleSubsystem* Subsystem = GetSampleSubsystem();
+	if (!Subsystem || !AttributeAssetList || ImportQueue.IsEmpty())
+	{
+		FinishImport();
+		return;
+	}
+
+	const FString FilePath = ImportQueue[0];
+	ImportQueue.RemoveAt(0);
+
+	FString Error;
+	if (UAttributeAssetItem* Imported = Subsystem->ImportUserAsset(FilePath, ImportLayer, Error))
+	{
+		++ImportSucceeded;
+		LastImported = Imported;
+	}
+	else
+	{
+		ImportErrors.Add(FString::Printf(TEXT("%s (%s)"), *FPaths::GetCleanFilename(FilePath), *Error));
+	}
+
+	if (ImportQueue.IsEmpty())
+	{
+		FinishImport();
+		return;
+	}
+
+	// Show the next file, let this frame paint, then import it
+	AttributeAssetList->SetStatus(FString::Printf(TEXT("Importing %d/%d: %s ..."),
+		ImportTotal - ImportQueue.Num() + 1, ImportTotal, *FPaths::GetCleanFilename(ImportQueue[0])));
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateUObject(this, &UAttributeRightPanelWidget::ImportNextQueued));
+	}
+	else
+	{
+		FinishImport();
+	}
+}
+
+void UAttributeRightPanelWidget::FinishImport()
+{
+	bImportRunning = false;
+	ImportQueue.Reset();
+	if (!AttributeAssetList)
+	{
+		return;
+	}
+
+	// The catalog broadcast already refreshed the tiles; select the last import if its layer is still shown
+	UAttributeAssetItem* Last = LastImported.Get();
+	if (Last && ImportLayer == CurrentLayer)
+	{
+		AttributeAssetList->SelectItem(Last);
+	}
+
+	FString Message;
+	if (ImportTotal == 1 && ImportSucceeded == 1 && Last)
+	{
+		Message = FString::Printf(TEXT("Imported '%s'. Press Apply to add it."), *Last->Data.Name);
+	}
+	else if (ImportTotal == 1 && ImportErrors.Num() == 1)
+	{
+		Message = TEXT("Import failed: ") + ImportErrors[0];
+	}
+	else
+	{
+		Message = FString::Printf(TEXT("Imported %d of %d file(s)."), ImportSucceeded, ImportTotal);
+		if (ImportErrors.Num() > 0)
+		{
+			Message += TEXT(" Failed: ") + FString::Join(ImportErrors, TEXT(", "));
+		}
+		if (ImportSucceeded > 0)
+		{
+			Message += TEXT(" Select one and press Apply.");
+		}
+	}
+	if (ImportSkipped > 0)
+	{
+		Message += FString::Printf(TEXT(" Skipped %d unsupported file(s)."), ImportSkipped);
+	}
+	AttributeAssetList->SetStatus(Message, ImportErrors.Num() > 0);
 }
 
 void UAttributeRightPanelWidget::HandleCloseClicked()

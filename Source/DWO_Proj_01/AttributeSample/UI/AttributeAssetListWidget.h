@@ -8,8 +8,12 @@
 #include "AttributeAssetListWidget.generated.h"
 
 class UButton;
+class UFileDropZone;
 class UTextBlock;
 class UTileView;
+
+/** Files dropped from Explorer onto the Import button: (allowed mesh files, everything else) */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnImportFilesDropped, const TArray<FString>& /*AcceptedFiles*/, const TArray<FString>& /*RejectedFiles*/);
 
 UCLASS()
 class DWO_PROJ_01_API UAttributeAssetListWidget : public UUserWidget
@@ -31,6 +35,7 @@ public:
 
 	FSimpleMulticastDelegate OnApplyClicked;
 	FSimpleMulticastDelegate OnImportClicked;
+	FOnImportFilesDropped OnImportFilesDropped;
 
 	/** TileView size = Columns x VisibleRows entries */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Attribute|UI", meta = (ClampMin = "1"))
@@ -57,6 +62,12 @@ protected:
 	UFUNCTION()
 	void HandleImportClicked();
 
+	/** Wraps the Import button in a File Drop Zone unless the designer already placed one around it. */
+	void EnsureImportDropZone();
+
+	UFUNCTION()
+	void HandleImportFilesDropped(const TArray<FString>& AcceptedFiles, const TArray<FString>& RejectedFiles);
+
 	UPROPERTY(EditAnywhere, Category = "Attribute|UI")
 	TSoftClassPtr<UUserWidget> EntryWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/AttributeSample/UI/WBP_AttributeAssetItem.WBP_AttributeAssetItem_C")));
 
@@ -68,6 +79,11 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Attribute|UI", meta = (BindWidgetOptional))
 	TObjectPtr<UButton> ImportUserAsset;
+
+	/** Optional: place a File Drop Zone named ImportDropZone around the Import button in the designer.
+	 *  If missing, one is created around ImportUserAsset at runtime. */
+	UPROPERTY(BlueprintReadOnly, Category = "Attribute|UI", meta = (BindWidgetOptional))
+	TObjectPtr<UFileDropZone> ImportDropZone;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Attribute|UI", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> StatusText;

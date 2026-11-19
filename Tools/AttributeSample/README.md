@@ -13,7 +13,8 @@ UE 5.7 샘플: DataTable 기반 Attribute 목록 → 뷰포트 스폰, 그리고
 | Building / Load 탭 | 레이어별로 목록 필터 |
 | `+ Add Attribute` | RightPanel(Asset Library) 열기 |
 | 타일 선택 → `Apply` | 선택 에셋을 LeftPanel 목록에 추가 |
-| `Import User Asset...` | 탐색기 대화상자 → glTFRuntime(FBX는 glTFRuntimeFBX)으로 로드 → 카탈로그에 추가 |
+| `Import User Asset...` | 탐색기 대화상자(Ctrl / Shift로 여러 파일 선택) → glTFRuntime(FBX는 glTFRuntimeFBX)으로 로드 → 카탈로그에 추가 |
+| 탐색기에서 파일을 `Import User Asset...` 버튼으로 드래그 | 여러 파일을 한 번에 가져오기. `.gltf/.glb/.fbx`만 받고 나머지는 건너뜀(파란 테두리 = 받을 수 있음, 빨간 테두리 = 지원 파일 없음). 한 프레임에 한 파일씩 처리하며 상태줄에 진행 표시. 게임을 관리자 권한으로 실행하면 Windows가 드롭을 막음 |
 | 우클릭 드래그 / 휠 | 카메라 회전 / 줌 |
 
 콘솔 명령 (개발 빌드): `AttributeSpawnAll`, `AttributeShowLibrary 0|1`, `AttributeImportFile <경로> 0|1`

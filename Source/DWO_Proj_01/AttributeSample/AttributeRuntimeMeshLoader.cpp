@@ -23,6 +23,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogAttributeImport, Log, All);
 
 namespace AttributeImport
 {
+	/** Native Windows open-file dialog filtered to mesh files. */
+	static bool ShowMeshFileDialog(bool bMultiSelect, TArray<FString>& OutFilePaths);
+
 	/** World transform of an FBX node = own local transform composed with every parent. */
 	static FTransform GetFBXParentChainTransform(UglTFRuntimeAsset* Asset, const FglTFRuntimeFBXNode& Node)
 	{
@@ -105,6 +108,23 @@ bool UAttributeRuntimeMeshLoader::IsSupportedMeshFile(const FString& FilePath)
 
 bool UAttributeRuntimeMeshLoader::OpenMeshFileDialog(FString& OutFilePath)
 {
+	TArray<FString> Picked;
+	if (!AttributeImport::ShowMeshFileDialog(false, Picked) || Picked.IsEmpty())
+	{
+		return false;
+	}
+	OutFilePath = Picked[0];
+	return true;
+}
+
+bool UAttributeRuntimeMeshLoader::OpenMeshFilesDialog(TArray<FString>& OutFilePaths)
+{
+	OutFilePaths.Reset();
+	return AttributeImport::ShowMeshFileDialog(true, OutFilePaths) && !OutFilePaths.IsEmpty();
+}
+
+bool AttributeImport::ShowMeshFileDialog(bool bMultiSelect, TArray<FString>& OutFilePaths)
+{
 #if PLATFORM_WINDOWS
 	const HRESULT InitResult = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 	const bool bShouldUninitialize = SUCCEEDED(InitResult);
@@ -120,11 +140,16 @@ bool UAttributeRuntimeMeshLoader::OpenMeshFileDialog(FString& OutFilePath)
 			{ L"FBX (*.fbx)", L"*.fbx" },
 		};
 		Dialog->SetFileTypes(UE_ARRAY_COUNT(Filters), Filters);
-		Dialog->SetTitle(L"Select a mesh file");
+		Dialog->SetTitle(bMultiSelect ? L"Select mesh files" : L"Select a mesh file");
 
 		DWORD Options = 0;
 		Dialog->GetOptions(&Options);
-		Dialog->SetOptions(Options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+		Options |= FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST;
+		if (bMultiSelect)
+		{
+			Options |= FOS_ALLOWMULTISELECT;
+		}
+		Dialog->SetOptions(Options);
 
 		HWND ParentWindow = nullptr;
 		if (GEngine && GEngine->GameViewport)
@@ -138,17 +163,28 @@ bool UAttributeRuntimeMeshLoader::OpenMeshFileDialog(FString& OutFilePath)
 
 		if (SUCCEEDED(Dialog->Show(ParentWindow)))
 		{
-			IShellItem* Item = nullptr;
-			if (SUCCEEDED(Dialog->GetResult(&Item)))
+			// GetResults works for single and multi selection
+			IShellItemArray* Items = nullptr;
+			if (SUCCEEDED(Dialog->GetResults(&Items)))
 			{
-				PWSTR Path = nullptr;
-				if (SUCCEEDED(Item->GetDisplayName(SIGDN_FILESYSPATH, &Path)))
+				DWORD Count = 0;
+				Items->GetCount(&Count);
+				for (DWORD i = 0; i < Count; ++i)
 				{
-					OutFilePath = FString(Path);
-					::CoTaskMemFree(Path);
-					bPicked = true;
+					IShellItem* Item = nullptr;
+					if (SUCCEEDED(Items->GetItemAt(i, &Item)))
+					{
+						PWSTR Path = nullptr;
+						if (SUCCEEDED(Item->GetDisplayName(SIGDN_FILESYSPATH, &Path)))
+						{
+							OutFilePaths.Add(FString(Path));
+							::CoTaskMemFree(Path);
+						}
+						Item->Release();
+					}
 				}
-				Item->Release();
+				Items->Release();
+				bPicked = OutFilePaths.Num() > 0;
 			}
 		}
 		Dialog->Release();
@@ -160,7 +196,7 @@ bool UAttributeRuntimeMeshLoader::OpenMeshFileDialog(FString& OutFilePath)
 	}
 	return bPicked;
 #else
-	UE_LOG(LogAttributeImport, Warning, TEXT("OpenMeshFileDialog is only implemented on Windows."));
+	UE_LOG(LogAttributeImport, Warning, TEXT("The mesh file dialog is only implemented on Windows."));
 	return false;
 #endif
 }

@@ -18,6 +18,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Attribute|Import")
 	static bool OpenMeshFileDialog(FString& OutFilePath);
 
+	/** Same dialog with multi-select (Ctrl / Shift + click). Returns false when cancelled or unsupported. */
+	UFUNCTION(BlueprintCallable, Category = "Attribute|Import")
+	static bool OpenMeshFilesDialog(TArray<FString>& OutFilePaths);
+
 	/**
 	 * Loads a .gltf / .glb / .fbx file and merges all mesh nodes into one UStaticMesh.
 	 * Must run on the game thread.

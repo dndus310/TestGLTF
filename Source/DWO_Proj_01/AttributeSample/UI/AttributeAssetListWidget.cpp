@@ -4,6 +4,7 @@
 
 #include "AttributeAssetItemWidget.h"
 #include "AttributeUIHelpers.h"
+#include "FileDropZone.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/HorizontalBox.h"
@@ -32,6 +33,50 @@ void UAttributeAssetListWidget::NativeOnInitialized()
 	{
 		ImportUserAsset->OnClicked.AddUniqueDynamic(this, &UAttributeAssetListWidget::HandleImportClicked);
 	}
+
+	EnsureImportDropZone();
+}
+
+void UAttributeAssetListWidget::EnsureImportDropZone()
+{
+	if (!ImportDropZone && ImportUserAsset)
+	{
+		UPanelWidget* Parent = ImportUserAsset->GetParent();
+		if (UFileDropZone* Existing = Cast<UFileDropZone>(Parent))
+		{
+			ImportDropZone = Existing;
+		}
+		else if (Parent)
+		{
+			// The drop zone takes over the button's slot (fill / padding stay as designed), the button moves inside it
+			const int32 Index = Parent->GetChildIndex(ImportUserAsset);
+			UFileDropZone* Zone = WidgetTree->ConstructWidget<UFileDropZone>(UFileDropZone::StaticClass(), TEXT("ImportDropZone"));
+			if (Index != INDEX_NONE && Parent->ReplaceChildAt(Index, Zone))
+			{
+				ImportUserAsset->Slot = nullptr; // ReplaceChildAt reuses the slot but leaves the old child pointing at it
+				Zone->SetContent(ImportUserAsset);
+				ImportDropZone = Zone;
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Verbose, TEXT("[AttributeAssetList] %s: ImportUserAsset=%s parent=%s dropzone=%s"), *GetName(), *GetNameSafe(ImportUserAsset),
+		ImportUserAsset ? *GetNameSafe(ImportUserAsset->GetParent()) : TEXT("-"), *GetNameSafe(ImportDropZone));
+
+	if (ImportDropZone)
+	{
+		if (ImportDropZone->AllowedExtensions.IsEmpty())
+		{
+			ImportDropZone->AllowedExtensions = { TEXT("gltf"), TEXT("glb"), TEXT("fbx") };
+		}
+		ImportDropZone->SetToolTipText(FText::FromString(TEXT("Click to browse, or drop .gltf / .glb / .fbx files here")));
+		ImportDropZone->OnFilesDropped.AddUniqueDynamic(this, &UAttributeAssetListWidget::HandleImportFilesDropped);
+	}
+}
+
+void UAttributeAssetListWidget::HandleImportFilesDropped(const TArray<FString>& AcceptedFiles, const TArray<FString>& RejectedFiles)
+{
+	OnImportFilesDropped.Broadcast(AcceptedFiles, RejectedFiles);
 }
 
 void UAttributeAssetListWidget::BuildDefaultLayout()

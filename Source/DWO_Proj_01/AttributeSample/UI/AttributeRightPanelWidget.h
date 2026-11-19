@@ -32,6 +32,12 @@ protected:
 
 	void HandleApply();
 	void HandleImportUserAsset();
+	void HandleImportFilesDropped(const TArray<FString>& AcceptedFiles, const TArray<FString>& RejectedFiles);
+
+	/** Queues files for import into the current layer. Imports run one per frame so the status can repaint. */
+	void QueueImport(const TArray<FString>& Files, int32 SkippedCount);
+	void ImportNextQueued();
+	void FinishImport();
 
 	UFUNCTION()
 	void HandleCloseClicked();
@@ -47,4 +53,14 @@ protected:
 
 private:
 	FDelegateHandle CatalogChangedHandle;
+
+	// Batch import state
+	TArray<FString> ImportQueue;
+	TArray<FString> ImportErrors;
+	TWeakObjectPtr<UAttributeAssetItem> LastImported;
+	EAttributeAssetType ImportLayer = EAttributeAssetType::Building;
+	int32 ImportTotal = 0;
+	int32 ImportSucceeded = 0;
+	int32 ImportSkipped = 0;
+	bool bImportRunning = false;
 };
