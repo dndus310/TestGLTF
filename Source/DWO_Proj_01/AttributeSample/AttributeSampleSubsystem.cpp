@@ -7,12 +7,15 @@
 #include "BuildingAttribute.h"
 #include "CoreAttribute.h"
 #include "LoadAttribute.h"
+#include "UserAssetLibrary.h"
 
 #include "Engine/DataTable.h"
+#include "Engine/GameInstance.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
+#include "HAL/FileManager.h"
 #include "Misc/Paths.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogAttributeSample, Log, All);
@@ -28,6 +31,22 @@ void UAttributeSampleSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	BuildingAttributeClass = ABuildingAttribute::StaticClass();
 	LoadAttributeClass = ALoadAttribute::StaticClass();
+}
+
+void UAttributeSampleSubsystem::Deinitialize()
+{
+	if (UUserAssetLibrary* Library = GetUserAssetLibrary())
+	{
+		Library->OnAssetRestored.Remove(AssetRestoredHandle);
+	}
+	Super::Deinitialize();
+}
+
+UUserAssetLibrary* UAttributeSampleSubsystem::GetUserAssetLibrary() const
+{
+	const UWorld* World = GetWorld();
+	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	return GameInstance ? GameInstance->GetSubsystem<UUserAssetLibrary>() : nullptr;
 }
 
 void UAttributeSampleSubsystem::InitializeFromDataTable(UDataTable* DataTable)
@@ -57,6 +76,75 @@ void UAttributeSampleSubsystem::InitializeFromDataTable(UDataTable* DataTable)
 		});
 	}
 
+	LoadUserAssetsFromLibrary();
+
+	OnCatalogChanged.Broadcast();
+	OnAttributeListChanged.Broadcast();
+}
+
+void UAttributeSampleSubsystem::LoadUserAssetsFromLibrary()
+{
+	UUserAssetLibrary* Library = GetUserAssetLibrary();
+	if (!Library)
+	{
+		return;
+	}
+
+	Library->OnAssetRestored.Remove(AssetRestoredHandle);
+	AssetRestoredHandle = Library->OnAssetRestored.AddUObject(this, &UAttributeSampleSubsystem::HandleUserAssetRestored);
+
+	int32 Loaded = 0;
+	for (const FUserAssetEntry& Entry : Library->GetEntries())
+	{
+		// Entries whose local file is missing are restored by the sync and arrive through OnAssetRestored
+		if (Entry.State != EUserAssetSyncState::PendingDelete && IFileManager::Get().FileExists(*Library->GetLocalPath(Entry)))
+		{
+			Loaded += AddLibraryEntryToCatalog(Entry) ? 1 : 0;
+		}
+	}
+	UE_LOG(LogAttributeSample, Log, TEXT("Loaded %d saved user asset(s) into the catalog."), Loaded);
+
+	// Hash-check every saved asset against the server (uploads, repairs, pending deletes)
+	Library->SyncAll();
+}
+
+UAttributeAssetItem* UAttributeSampleSubsystem::AddLibraryEntryToCatalog(const FUserAssetEntry& Entry)
+{
+	UUserAssetLibrary* Library = GetUserAssetLibrary();
+	if (!Library)
+	{
+		return nullptr;
+	}
+
+	FString Error;
+	UAttributeAssetItem* Item = ImportUserAsset(Library->GetLocalPath(Entry), Entry.Layer, Error);
+	if (!Item)
+	{
+		UE_LOG(LogAttributeSample, Warning, TEXT("Saved user asset '%s' could not be loaded: %s"), *Entry.Name, *Error);
+		return nullptr;
+	}
+	Item->Data.Name = Entry.Name;
+	Item->UserAssetId = Entry.LocalId;
+	return Item;
+}
+
+void UAttributeSampleSubsystem::HandleUserAssetRestored(const FUserAssetEntry& Entry)
+{
+	// Replace an item that showed the old (damaged) file, or add one whose file was missing
+	bool bWasInAttributeList = false;
+	for (int32 i = Catalog.Num() - 1; i >= 0; --i)
+	{
+		if (Catalog[i] && Catalog[i]->UserAssetId == Entry.LocalId)
+		{
+			bWasInAttributeList |= AttributeList.Remove(Catalog[i]) > 0;
+			Catalog.RemoveAt(i);
+		}
+	}
+	UAttributeAssetItem* Item = AddLibraryEntryToCatalog(Entry);
+	if (Item && bWasInAttributeList)
+	{
+		AttributeList.Add(Item);
+	}
 	OnCatalogChanged.Broadcast();
 	OnAttributeListChanged.Broadcast();
 }
@@ -170,6 +258,54 @@ UAttributeAssetItem* UAttributeSampleSubsystem::ImportUserAsset(const FString& F
 	Catalog.Add(Item);
 	OnCatalogChanged.Broadcast();
 	return Item;
+}
+
+UAttributeAssetItem* UAttributeSampleSubsystem::ImportAndRegisterUserAsset(const FString& FilePath, EAttributeAssetType Type, FString& OutError)
+{
+	// Validate by loading first: only files that actually import are saved and uploaded
+	UAttributeAssetItem* Item = ImportUserAsset(FilePath, Type, OutError);
+	if (!Item)
+	{
+		return nullptr;
+	}
+
+	UUserAssetLibrary* Library = GetUserAssetLibrary();
+	FUserAssetEntry Entry;
+	FString LibraryError;
+	if (Library && Library->AddFile(FilePath, Type, Entry, LibraryError))
+	{
+		Item->SourceFilePath = Library->GetLocalPath(Entry);
+		Item->UserAssetId = Entry.LocalId;
+	}
+	else
+	{
+		UE_LOG(LogAttributeSample, Warning, TEXT("'%s' imported but not saved to the user library: %s"), *FilePath, *LibraryError);
+	}
+	return Item;
+}
+
+bool UAttributeSampleSubsystem::DeleteUserAsset(UAttributeAssetItem* Item, FString& OutError)
+{
+	if (!Item || !Item->IsUserImported())
+	{
+		OutError = TEXT("Only imported user assets can be deleted.");
+		return false;
+	}
+
+	Catalog.Remove(Item);
+	AttributeList.Remove(Item);
+	if (!Item->UserAssetId.IsEmpty())
+	{
+		if (UUserAssetLibrary* Library = GetUserAssetLibrary())
+		{
+			Library->RemoveAsset(Item->UserAssetId); // local file + manifest now, server DELETE in the sync
+		}
+	}
+	UE_LOG(LogAttributeSample, Log, TEXT("Deleted user asset '%s'"), *Item->Data.Name);
+
+	OnCatalogChanged.Broadcast();
+	OnAttributeListChanged.Broadcast();
+	return true;
 }
 
 UTexture* UAttributeSampleSubsystem::GetOrCreateThumbnail(UAttributeAssetItem* Item)

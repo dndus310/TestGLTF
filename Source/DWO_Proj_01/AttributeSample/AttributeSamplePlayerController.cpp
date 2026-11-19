@@ -4,12 +4,14 @@
 
 #include "AttributeSampleCameraPawn.h"
 #include "AttributeSampleSubsystem.h"
+#include "UserAssetLibrary.h"
 #include "UI/AttributeLeftPanelWidget.h"
 #include "UI/AttributeRightPanelWidget.h"
 #include "UI/AttributeUIHelpers.h"
 
 #include "Components/InputComponent.h"
 #include "Engine/DataTable.h"
+#include "Engine/GameInstance.h"
 #include "InputCoreTypes.h"
 
 AAttributeSamplePlayerController::AAttributeSamplePlayerController()
@@ -123,7 +125,7 @@ void AAttributeSamplePlayerController::AttributeImportFile(const FString& FilePa
 
 	FString Error;
 	const EAttributeAssetType Type = Layer == 1 ? EAttributeAssetType::Load : EAttributeAssetType::Building;
-	if (UAttributeAssetItem* Item = Subsystem->ImportUserAsset(FilePath.TrimQuotes(), Type, Error))
+	if (UAttributeAssetItem* Item = Subsystem->ImportAndRegisterUserAsset(FilePath.TrimQuotes(), Type, Error))
 	{
 		Subsystem->AddAttribute(Item);
 		Subsystem->SpawnAttribute(Item);
@@ -131,6 +133,40 @@ void AAttributeSamplePlayerController::AttributeImportFile(const FString& FilePa
 	else
 	{
 		ClientMessage(FString::Printf(TEXT("Import failed: %s"), *Error));
+	}
+}
+
+void AAttributeSamplePlayerController::AttributeDeleteUserAsset(const FString& Name)
+{
+	UAttributeSampleSubsystem* Subsystem = GetWorld()->GetSubsystem<UAttributeSampleSubsystem>();
+	if (!Subsystem)
+	{
+		return;
+	}
+
+	for (const EAttributeAssetType Type : { EAttributeAssetType::Building, EAttributeAssetType::Load })
+	{
+		for (UAttributeAssetItem* Item : Subsystem->GetCatalogItems(Type))
+		{
+			if (Item->IsUserImported() && Item->Data.Name.Equals(Name.TrimQuotes(), ESearchCase::IgnoreCase))
+			{
+				FString Error;
+				if (!Subsystem->DeleteUserAsset(Item, Error))
+				{
+					ClientMessage(Error);
+				}
+				return;
+			}
+		}
+	}
+	ClientMessage(FString::Printf(TEXT("No user asset named '%s'."), *Name));
+}
+
+void AAttributeSamplePlayerController::AttributeSyncUserAssets()
+{
+	if (UUserAssetLibrary* Library = GetGameInstance() ? GetGameInstance()->GetSubsystem<UUserAssetLibrary>() : nullptr)
+	{
+		Library->SyncAll();
 	}
 }
 

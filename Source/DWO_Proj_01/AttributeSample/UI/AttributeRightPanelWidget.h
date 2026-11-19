@@ -33,6 +33,9 @@ protected:
 	void HandleApply();
 	void HandleImportUserAsset();
 	void HandleImportFilesDropped(const TArray<FString>& AcceptedFiles, const TArray<FString>& RejectedFiles);
+	void HandleDeleteUserAsset();
+	/** UUserAssetLibrary server sync progress -> status line (not while a local import batch is running) */
+	void HandleSyncStatus(const FString& Message, bool bIsError);
 
 	/** Queues files for import into the current layer. Imports run one per frame so the status can repaint. */
 	void QueueImport(const TArray<FString>& Files, int32 SkippedCount);
@@ -53,6 +56,7 @@ protected:
 
 private:
 	FDelegateHandle CatalogChangedHandle;
+	FDelegateHandle SyncStatusHandle;
 
 	// Batch import state
 	TArray<FString> ImportQueue;

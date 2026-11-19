@@ -15,9 +15,31 @@ UE 5.7 샘플: DataTable 기반 Attribute 목록 → 뷰포트 스폰, 그리고
 | 타일 선택 → `Apply` | 선택 에셋을 LeftPanel 목록에 추가 |
 | `Import User Asset...` | 탐색기 대화상자(Ctrl / Shift로 여러 파일 선택) → glTFRuntime(FBX는 glTFRuntimeFBX)으로 로드 → 카탈로그에 추가 |
 | 탐색기에서 파일을 `Import User Asset...` 버튼으로 드래그 | 여러 파일을 한 번에 가져오기. `.gltf/.glb/.fbx`만 받고 나머지는 건너뜀(파란 테두리 = 받을 수 있음, 빨간 테두리 = 지원 파일 없음). 한 프레임에 한 파일씩 처리하며 상태줄에 진행 표시. 게임을 관리자 권한으로 실행하면 Windows가 드롭을 막음 |
+| 가져온(USER) 타일 선택 → `Delete` | 카탈로그·로컬 사본·manifest에서 지우고 서버에서도 삭제. DataTable 에셋을 선택하면 버튼이 비활성화됨 |
 | 우클릭 드래그 / 휠 | 카메라 회전 / 줌 |
 
-콘솔 명령 (개발 빌드): `AttributeSpawnAll`, `AttributeShowLibrary 0|1`, `AttributeImportFile <경로> 0|1`
+콘솔 명령 (개발 빌드): `AttributeSpawnAll`, `AttributeShowLibrary 0|1`, `AttributeImportFile <경로> 0|1`, `AttributeDeleteUserAsset <이름>`, `AttributeSyncUserAssets`
+
+## 사용자 에셋 저장과 서버 동기화
+
+가져온 파일은 PC에 저장되고(`UUserAssetLibrary`), 에셋 서버(`Tools/AssetServer`)에도 반영됩니다. **로컬이 기준**이며, 모든 비교는 SHA-256 해시로 합니다.
+
+- 로컬 저장: `Saved/UserAssets/Files/<localId><ext>`에 파일을 복사하고, `Saved/UserAssets/manifest.json`에 이름, 레이어, sha256, 크기, 서버 id, 상태(`PendingUpload`/`Synced`/`PendingDelete`/`Error`)를 기록합니다. 변경(가져오기·삭제)은 항상 manifest에 먼저 기록한 뒤 서버에 보냅니다.
+- 시작할 때: manifest의 에셋을 카탈로그에 불러온 뒤, 모든 항목을 서버와 비교합니다(`AttributeSyncUserAssets`로 직접 실행할 수도 있음).
+- 비교 규칙 (R = manifest의 해시, L = 로컬 파일 해시, S = 서버가 저장 파일을 다시 계산한 해시 `?verify=true`):
+
+| 상황 | 동작 |
+|---|---|
+| 서버에 없음 | `X-Content-SHA256 = L`로 업로드합니다. 서버는 받은 파일의 해시가 다르면 422로 거부합니다. 업로드 후 S == L인지 다시 확인합니다. |
+| S == L | 동기화 완료 |
+| S ≠ L (서버 사본이 다름) | 서버 사본을 내려받아 해시를 로컬과 비교해 로그에 남기고, 로컬 파일로 서버 사본을 교체(PUT, id 유지)한 뒤 S == L을 다시 확인합니다. |
+| L ≠ R (로컬 파일이 바뀌거나 손상됨) | 서버 사본이 R과 같으면 내려받아 로컬을 복구합니다. 아니면 로컬 파일을 새 기준으로 삼고(R = L) 서버에 올립니다. |
+| 로컬 파일 없음 | 서버 사본을 내려받아 해시가 S와 같은지 확인한 뒤 복원하고 카탈로그에 다시 불러옵니다. |
+| 삭제 | 로컬 사본과 manifest 항목을 지우고(서버 id가 있으면 `PendingDelete`) 서버에 DELETE를 보냅니다. 서버에서 지워지면 항목을 제거합니다. |
+
+- 서버에 연결할 수 없으면 변경은 manifest에 남고(`PendingUpload`/`PendingDelete`), 다음 동기화 때 다시 보냅니다.
+- 서버 주소: 기본값 `http://localhost:8000`, 실행 인자 `-AssetServerUrl=http://호스트:포트`로 변경할 수 있습니다.
+- 진행 상황과 결과는 Asset Library 상태줄과 로그(`LogUserAssets`)에 표시됩니다.
 
 ## 구성
 
@@ -28,7 +50,8 @@ UE 5.7 샘플: DataTable 기반 Attribute 목록 → 뷰포트 스폰, 그리고
 | `WBP_LeftPanel` | `UAttributeLeftPanelWidget` : Layer(HorizontalBox) + `WBP_AttributeList` |
 | `WBP_AttributeList` | `UAttributeListWidget` : List(VerticalBox) + AddAttribute(Button) |
 | `WBP_RightPanel` | `UAttributeRightPanelWidget` : Layer + `WBP_AttributeAssetList` |
-| `WBP_AttributeAssetList` | `UAttributeAssetListWidget` : List(TileView, Columns x VisibleRows) + Apply |
+| `WBP_AttributeAssetList` | `UAttributeAssetListWidget` : List(TileView, Columns x VisibleRows) + Import(File Drop Zone) + Delete + Apply. 드롭 존과 Delete 버튼은 디자이너에 없으면 런타임에 추가됨 |
+| 사용자 에셋 저장·동기화 | `UUserAssetLibrary`(manifest + 로컬 사본 + 동기화), `UAssetServerSubsystem`(HTTP), `FAssetSha256` |
 | `WBP_AttributeAssetItem` | `UAttributeAssetItemWidget` (TileView 엔트리) |
 | `CoreAttribute` | `ACoreAttribute` : SplineComponent + StaticMeshComponent(DefaultMesh), `ApplyRuntimeSetMeshAsset`, `MakeSplinePointsByShapeBounding` |
 | `BuildingAttribute`, `LoadAttribute` | `ABuildingAttribute`, `ALoadAttribute` |

@@ -1,6 +1,8 @@
 """
 Asset server (closed-network friendly)
-- Upload / list / info / download / delete user assets (.glb / .gltf)
+- Upload / replace / list / info / download / delete user assets (.glb / .gltf / .fbx)
+- Integrity: clients send X-Content-SHA256 with uploads (mismatch -> 422), and
+  GET /assets/{id}?verify=true re-hashes the stored file so clients can compare it with theirs
 - Files on local disk (./storage), metadata in SQLite (./assets.db)
 - Swagger UI served from ./static/swagger (no CDN access needed)
 
@@ -11,13 +13,15 @@ import base64
 import binascii
 import hashlib
 import json
+import os
+import re
 import sqlite3
 import struct
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse
@@ -30,9 +34,12 @@ MAX_SIZE = 500 * 1024 * 1024  # 500 MB
 CHUNK = 1024 * 1024
 MAX_JSON_MB = 20  # base64-in-JSON is only for small files (+33% size, whole file in memory)
 MAX_JSON_B64 = (MAX_JSON_MB * 1024 * 1024 * 4) // 3 + 4
+ALLOWED_EXTS = (".glb", ".gltf", ".fbx")
+MEDIA_TYPES = {".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".fbx": "application/octet-stream"}
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 STORE.mkdir(exist_ok=True)
 
-app = FastAPI(title="Asset Server", version="0.1.0", docs_url=None, redoc_url=None)
+app = FastAPI(title="Asset Server", version="0.2.0", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
 
@@ -85,11 +92,31 @@ with db() as con:
     con.execute("""CREATE TABLE IF NOT EXISTS assets (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, ext TEXT NOT NULL, size INTEGER NOT NULL,
         sha256 TEXT NOT NULL, created_at TEXT NOT NULL, summary TEXT)""")
+    # v0.2: replaced assets keep their id; updated_at tells when the content last changed
+    if "updated_at" not in [c[1] for c in con.execute("PRAGMA table_info(assets)")]:
+        con.execute("ALTER TABLE assets ADD COLUMN updated_at TEXT")
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def stored_path(r) -> Path:
+    return STORE / f"{r['id']}{r['ext']}"
+
+
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(CHUNK):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def row_to_dict(r):
     d = dict(r)
     d["summary"] = json.loads(d["summary"]) if d.get("summary") else None
+    d["updated_at"] = d.get("updated_at") or d["created_at"]
     d["download_url"] = f"/assets/{d['id']}/download"
     return d
 
@@ -127,19 +154,40 @@ def inspect_glb(path: Path) -> dict:
     }
 
 
+def check_fbx(path: Path) -> None:
+    with path.open("rb") as f:
+        head = f.read(32)
+    if not (head.startswith(b"Kaydara FBX Binary") or b"FBX" in head[:32]):
+        raise ValueError("not an FBX file")
+
+
+def normalize_sha(value: str | None) -> str | None:
+    if value is None or value == "":
+        return None
+    value = value.strip().lower()
+    if not SHA256_RE.match(value):
+        raise HTTPException(400, "X-Content-SHA256 must be 64 hex characters")
+    return value
+
+
 # ---------------------------------------------------------------- API
-async def save_asset(filename: str | None, chunks) -> dict:
-    """Common save path for every upload style. `chunks` is an async iterator of bytes."""
+async def save_asset(filename: str | None, chunks, expected_sha256: str | None = None, replace_id: str | None = None) -> dict:
+    """
+    Common save path for every upload style. `chunks` is an async iterator of bytes.
+    The body goes to a temp file first; only a complete, validated file (and a matching
+    expected_sha256, when the client sent one) replaces anything in storage.
+    """
     name = Path(filename or "").name
     ext = Path(name).suffix.lower()
-    if ext not in (".glb", ".gltf"):
-        raise HTTPException(400, "only .glb / .gltf files are allowed")
+    if ext not in ALLOWED_EXTS:
+        raise HTTPException(400, "only .glb / .gltf / .fbx files are allowed")
+    expected_sha256 = normalize_sha(expected_sha256)
+    old = get_row(replace_id) if replace_id else None
 
-    asset_id = str(uuid.uuid4())
-    dst = STORE / f"{asset_id}{ext}"
+    tmp = STORE / f".upload-{uuid.uuid4().hex}{ext}"
     sha, size = hashlib.sha256(), 0
     try:
-        with dst.open("wb") as out:
+        with tmp.open("wb") as out:
             async for chunk in chunks:  # stream to disk, don't hold it all in memory
                 size += len(chunk)
                 if size > MAX_SIZE:
@@ -148,20 +196,35 @@ async def save_asset(filename: str | None, chunks) -> dict:
                 out.write(chunk)
         if size == 0:
             raise HTTPException(400, "empty body")
+        digest = sha.hexdigest()
+        if expected_sha256 and digest != expected_sha256:
+            raise HTTPException(422, f"hash mismatch: received {digest}, expected {expected_sha256}")
         summary = None
-        if ext == ".glb":
-            try:
-                summary = inspect_glb(dst)
-            except ValueError as e:
-                raise HTTPException(400, f"invalid GLB: {e}")
+        try:
+            if ext == ".glb":
+                summary = inspect_glb(tmp)
+            elif ext == ".fbx":
+                check_fbx(tmp)
+        except ValueError as e:
+            raise HTTPException(400, f"invalid {ext[1:].upper()}: {e}")
+
+        asset_id = old["id"] if old else str(uuid.uuid4())
+        final = STORE / f"{asset_id}{ext}"
+        os.replace(tmp, final)  # atomic swap: readers see the old or the new file, never half of one
+        if old and old["ext"] != ext:
+            stored_path(old).unlink(missing_ok=True)
     except BaseException:
-        dst.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
         raise
 
-    rec = (asset_id, name, ext, size, sha.hexdigest(), datetime.now(timezone.utc).isoformat(),
-           json.dumps(summary) if summary else None)
+    stamp = now_iso()
     with db() as con:
-        con.execute("INSERT INTO assets VALUES (?,?,?,?,?,?,?)", rec)
+        if old:
+            con.execute("UPDATE assets SET name=?, ext=?, size=?, sha256=?, summary=?, updated_at=? WHERE id=?",
+                        (name, ext, size, digest, json.dumps(summary) if summary else None, stamp, asset_id))
+        else:
+            con.execute("INSERT INTO assets (id, name, ext, size, sha256, created_at, summary, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                        (asset_id, name, ext, size, digest, stamp, json.dumps(summary) if summary else None, stamp))
     return row_to_dict(get_row(asset_id))
 
 
@@ -175,7 +238,7 @@ async def _one_chunk(data: bytes):
 
 
 @app.post("/assets", summary="Upload asset - multipart/form-data (Swagger, curl)", status_code=201)
-async def upload_asset(file: UploadFile = File(..., description="GLB or glTF file")):
+async def upload_asset(file: UploadFile = File(..., description="GLB, glTF or FBX file")):
     return await save_asset(file.filename, _upload_chunks(file))
 
 
@@ -183,9 +246,19 @@ async def upload_asset(file: UploadFile = File(..., description="GLB or glTF fil
           openapi_extra={"requestBody": {"required": True, "content": {
               "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}})
 async def upload_asset_raw(request: Request,
-                           name: str = Query(..., description="original file name, e.g. Gun.glb")):
+                           name: str = Query(..., description="original file name, e.g. Gun.glb"),
+                           x_content_sha256: str | None = Header(None, description="sha256 of the body (hex); mismatch -> 422")):
     # Body = the file bytes as-is (Content-Type: application/octet-stream). Response = JSON.
-    return await save_asset(name, request.stream())
+    return await save_asset(name, request.stream(), x_content_sha256)
+
+
+@app.put("/assets/{asset_id}/raw", summary="Replace an asset's file - raw binary body (keeps the id)",
+         openapi_extra={"requestBody": {"required": True, "content": {
+             "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}})
+async def replace_asset_raw(asset_id: str, request: Request,
+                            name: str = Query(..., description="file name, e.g. Gun.glb"),
+                            x_content_sha256: str | None = Header(None, description="sha256 of the body (hex); mismatch -> 422")):
+    return await save_asset(name, request.stream(), x_content_sha256, replace_id=asset_id)
 
 
 class Base64Upload(BaseModel):
@@ -218,19 +291,26 @@ def list_assets(q: str | None = Query(None, description="filter by file name"),
     return [row_to_dict(r) for r in rows]
 
 
-@app.get("/assets/{asset_id}", summary="Asset info")
-def asset_info(asset_id: str):
-    return row_to_dict(get_row(asset_id))
+@app.get("/assets/{asset_id}", summary="Asset info (verify=true re-hashes the stored file)")
+def asset_info(asset_id: str, verify: bool = Query(False, description="re-hash the stored file and report stored_sha256 / intact")):
+    r = get_row(asset_id)
+    d = row_to_dict(r)
+    if verify:
+        path = stored_path(r)
+        d["file_present"] = path.exists()
+        d["stored_sha256"] = file_sha256(path) if path.exists() else None
+        d["intact"] = d["stored_sha256"] == r["sha256"]
+    return d
 
 
 @app.get("/assets/{asset_id}/download", summary="Download asset file")
 def download_asset(asset_id: str):
     r = get_row(asset_id)
-    path = STORE / f"{r['id']}{r['ext']}"
+    path = stored_path(r)
     if not path.exists():
         raise HTTPException(410, "file missing from storage")
-    media = "model/gltf-binary" if r["ext"] == ".glb" else "model/gltf+json"
-    return FileResponse(path, media_type=media, filename=r["name"], headers={"ETag": r["sha256"]})
+    return FileResponse(path, media_type=MEDIA_TYPES.get(r["ext"], "application/octet-stream"),
+                        filename=r["name"], headers={"ETag": r["sha256"]})
 
 
 @app.get("/assets/{asset_id}/base64", summary="Download asset as JSON with base64 data (small files only)")
@@ -238,7 +318,7 @@ def download_asset_base64(asset_id: str):
     r = get_row(asset_id)
     if r["size"] > MAX_JSON_MB * 1024 * 1024:
         raise HTTPException(413, f"file over {MAX_JSON_MB} MB; use /assets/{asset_id}/download")
-    path = STORE / f"{r['id']}{r['ext']}"
+    path = stored_path(r)
     if not path.exists():
         raise HTTPException(410, "file missing from storage")
     return {**row_to_dict(r), "data_base64": base64.b64encode(path.read_bytes()).decode("ascii")}
@@ -247,7 +327,7 @@ def download_asset_base64(asset_id: str):
 @app.delete("/assets/{asset_id}", summary="Delete asset")
 def delete_asset(asset_id: str):
     r = get_row(asset_id)
-    (STORE / f"{r['id']}{r['ext']}").unlink(missing_ok=True)
+    stored_path(r).unlink(missing_ok=True)
     with db() as con:
         con.execute("DELETE FROM assets WHERE id=?", (asset_id,))
     return {"deleted": asset_id}

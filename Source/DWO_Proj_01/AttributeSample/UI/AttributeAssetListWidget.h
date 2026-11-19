@@ -36,6 +36,11 @@ public:
 	FSimpleMulticastDelegate OnApplyClicked;
 	FSimpleMulticastDelegate OnImportClicked;
 	FOnImportFilesDropped OnImportFilesDropped;
+	/** Delete pressed with a user-imported asset selected */
+	FSimpleMulticastDelegate OnDeleteClicked;
+
+	/** Enables Delete only while a user-imported asset is selected */
+	void RefreshDeleteButton();
 
 	/** TileView size = Columns x VisibleRows entries */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Attribute|UI", meta = (ClampMin = "1"))
@@ -68,6 +73,14 @@ protected:
 	UFUNCTION()
 	void HandleImportFilesDropped(const TArray<FString>& AcceptedFiles, const TArray<FString>& RejectedFiles);
 
+	/** Adds a Delete button next to Import unless the designer already has one named DeleteUserAsset. */
+	void EnsureDeleteButton();
+
+	UFUNCTION()
+	void HandleDeleteClicked();
+
+	void HandleSelectionChanged(UObject* Item);
+
 	UPROPERTY(EditAnywhere, Category = "Attribute|UI")
 	TSoftClassPtr<UUserWidget> EntryWidgetClass = TSoftClassPtr<UUserWidget>(FSoftObjectPath(TEXT("/Game/AttributeSample/UI/WBP_AttributeAssetItem.WBP_AttributeAssetItem_C")));
 
@@ -84,6 +97,10 @@ protected:
 	 *  If missing, one is created around ImportUserAsset at runtime. */
 	UPROPERTY(BlueprintReadOnly, Category = "Attribute|UI", meta = (BindWidgetOptional))
 	TObjectPtr<UFileDropZone> ImportDropZone;
+
+	/** Optional in the designer; created next to Import at runtime if missing. */
+	UPROPERTY(BlueprintReadOnly, Category = "Attribute|UI", meta = (BindWidgetOptional))
+	TObjectPtr<UButton> DeleteUserAsset;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Attribute|UI", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> StatusText;

@@ -45,9 +45,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Attribute")
 	ACoreAttribute* SpawnAttribute(UAttributeAssetItem* Item);
 
-	/** RightPanel "Import": loads a user file through glTFRuntime and adds it to the catalog. */
+	/** Loads a user file through glTFRuntime and adds it to the catalog (memory only, nothing is saved). */
 	UFUNCTION(BlueprintCallable, Category = "Attribute")
 	UAttributeAssetItem* ImportUserAsset(const FString& FilePath, EAttributeAssetType Type, FString& OutError);
+
+	/**
+	 * RightPanel "Import" / drop: ImportUserAsset, then registers the file in UUserAssetLibrary
+	 * (copied to Saved/UserAssets, recorded in manifest.json, uploaded to the asset server with a hash check).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Attribute")
+	UAttributeAssetItem* ImportAndRegisterUserAsset(const FString& FilePath, EAttributeAssetType Type, FString& OutError);
+
+	/** Removes a user import from the catalog / attribute list, deletes the local copy and the server copy. */
+	UFUNCTION(BlueprintCallable, Category = "Attribute")
+	bool DeleteUserAsset(UAttributeAssetItem* Item, FString& OutError);
 
 	UFUNCTION(BlueprintCallable, Category = "Attribute")
 	UTexture* GetOrCreateThumbnail(UAttributeAssetItem* Item);
@@ -70,9 +81,19 @@ public:
 
 protected:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void Deinitialize() override;
 
 private:
 	FVector FindSpawnLocation() const;
+
+	class UUserAssetLibrary* GetUserAssetLibrary() const;
+	/** Adds every saved user asset to the catalog and starts the server sync. */
+	void LoadUserAssetsFromLibrary();
+	UAttributeAssetItem* AddLibraryEntryToCatalog(const struct FUserAssetEntry& Entry);
+	/** The library rewrote a local file from the server copy: (re)load it into the catalog. */
+	void HandleUserAssetRestored(const struct FUserAssetEntry& Entry);
+
+	FDelegateHandle AssetRestoredHandle;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UAttributeAssetItem>> Catalog;

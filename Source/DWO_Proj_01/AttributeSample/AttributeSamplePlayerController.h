@@ -33,9 +33,17 @@ public:
 	UFUNCTION(Exec)
 	void AttributeShowLibrary(int32 Layer = 0);
 
-	/** Console: imports a file without the dialog, adds it to the list and spawns it. */
+	/** Console: imports a file without the dialog (saved + uploaded like the Import button), adds it to the list and spawns it. */
 	UFUNCTION(Exec)
 	void AttributeImportFile(const FString& FilePath, int32 Layer = 0);
+
+	/** Console: deletes the first user asset with this name (local copy, manifest entry and server copy). */
+	UFUNCTION(Exec)
+	void AttributeDeleteUserAsset(const FString& Name);
+
+	/** Console: hash-checks every saved user asset against the asset server now. */
+	UFUNCTION(Exec)
+	void AttributeSyncUserAssets();
 
 protected:
 	virtual void BeginPlay() override;

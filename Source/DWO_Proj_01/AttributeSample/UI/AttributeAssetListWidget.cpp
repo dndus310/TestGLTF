@@ -35,6 +35,59 @@ void UAttributeAssetListWidget::NativeOnInitialized()
 	}
 
 	EnsureImportDropZone();
+	EnsureDeleteButton();
+
+	if (DeleteUserAsset)
+	{
+		DeleteUserAsset->OnClicked.AddUniqueDynamic(this, &UAttributeAssetListWidget::HandleDeleteClicked);
+	}
+	if (List)
+	{
+		List->OnItemSelectionChanged().AddUObject(this, &UAttributeAssetListWidget::HandleSelectionChanged);
+	}
+	RefreshDeleteButton();
+}
+
+void UAttributeAssetListWidget::EnsureDeleteButton()
+{
+	if (DeleteUserAsset)
+	{
+		return;
+	}
+	UWidget* Anchor = ImportDropZone ? static_cast<UWidget*>(ImportDropZone) : static_cast<UWidget*>(ImportUserAsset);
+	UPanelWidget* Parent = Anchor ? Anchor->GetParent() : nullptr;
+	if (!Parent)
+	{
+		return;
+	}
+
+	DeleteUserAsset = AttributeUI::MakeButton(WidgetTree, TEXT("Delete"), TEXT("DeleteUserAsset"), AttributeUI::ButtonColor);
+	DeleteUserAsset->SetToolTipText(FText::FromString(TEXT("Delete the selected imported asset (local copy and server copy)")));
+	UPanelSlot* NewSlot = Parent->InsertChildAt(Parent->GetChildIndex(Anchor) + 1, DeleteUserAsset);
+	if (UHorizontalBoxSlot* BoxSlot = Cast<UHorizontalBoxSlot>(NewSlot))
+	{
+		BoxSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
+		BoxSlot->SetPadding(FMargin(0.f, 0.f, 6.f, 0.f));
+	}
+}
+
+void UAttributeAssetListWidget::HandleSelectionChanged(UObject* Item)
+{
+	RefreshDeleteButton();
+}
+
+void UAttributeAssetListWidget::RefreshDeleteButton()
+{
+	if (DeleteUserAsset)
+	{
+		const UAttributeAssetItem* Selected = GetSelectedItem();
+		DeleteUserAsset->SetIsEnabled(Selected && Selected->IsUserImported());
+	}
+}
+
+void UAttributeAssetListWidget::HandleDeleteClicked()
+{
+	OnDeleteClicked.Broadcast();
 }
 
 void UAttributeAssetListWidget::EnsureImportDropZone()
@@ -139,6 +192,7 @@ void UAttributeAssetListWidget::SetItems(const TArray<UAttributeAssetItem*>& Ite
 	{
 		List->SetListItems(Items);
 	}
+	RefreshDeleteButton();
 }
 
 UAttributeAssetItem* UAttributeAssetListWidget::GetSelectedItem() const

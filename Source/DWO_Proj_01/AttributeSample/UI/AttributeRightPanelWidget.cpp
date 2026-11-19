@@ -6,12 +6,14 @@
 #include "AttributeRuntimeMeshLoader.h"
 #include "AttributeSampleSubsystem.h"
 #include "AttributeUIHelpers.h"
+#include "UserAssetLibrary.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Misc/Paths.h"
 #include "TimerManager.h"
@@ -53,11 +55,17 @@ void UAttributeRightPanelWidget::OnPanelInitialized()
 		AttributeAssetList->OnApplyClicked.AddUObject(this, &UAttributeRightPanelWidget::HandleApply);
 		AttributeAssetList->OnImportClicked.AddUObject(this, &UAttributeRightPanelWidget::HandleImportUserAsset);
 		AttributeAssetList->OnImportFilesDropped.AddUObject(this, &UAttributeRightPanelWidget::HandleImportFilesDropped);
+		AttributeAssetList->OnDeleteClicked.AddUObject(this, &UAttributeRightPanelWidget::HandleDeleteUserAsset);
 	}
 
 	if (UAttributeSampleSubsystem* Subsystem = GetSampleSubsystem())
 	{
 		CatalogChangedHandle = Subsystem->OnCatalogChanged.AddUObject(this, &UAttributeRightPanelWidget::RefreshAssets);
+	}
+
+	if (UUserAssetLibrary* Library = GetGameInstance() ? GetGameInstance()->GetSubsystem<UUserAssetLibrary>() : nullptr)
+	{
+		SyncStatusHandle = Library->OnSyncStatus.AddUObject(this, &UAttributeRightPanelWidget::HandleSyncStatus);
 	}
 }
 
@@ -67,7 +75,44 @@ void UAttributeRightPanelWidget::NativeDestruct()
 	{
 		Subsystem->OnCatalogChanged.Remove(CatalogChangedHandle);
 	}
+	if (UUserAssetLibrary* Library = GetGameInstance() ? GetGameInstance()->GetSubsystem<UUserAssetLibrary>() : nullptr)
+	{
+		Library->OnSyncStatus.Remove(SyncStatusHandle);
+	}
 	Super::NativeDestruct();
+}
+
+void UAttributeRightPanelWidget::HandleSyncStatus(const FString& Message, bool bIsError)
+{
+	if (AttributeAssetList && !bImportRunning)
+	{
+		AttributeAssetList->SetStatus(Message, bIsError);
+	}
+}
+
+void UAttributeRightPanelWidget::HandleDeleteUserAsset()
+{
+	UAttributeSampleSubsystem* Subsystem = GetSampleSubsystem();
+	UAttributeAssetItem* Selected = AttributeAssetList ? AttributeAssetList->GetSelectedItem() : nullptr;
+	if (!Subsystem || !AttributeAssetList)
+	{
+		return;
+	}
+	if (bImportRunning)
+	{
+		AttributeAssetList->SetStatus(TEXT("Wait for the import to finish before deleting."), true);
+		return;
+	}
+
+	const FString Name = Selected ? Selected->Data.Name : FString();
+	FString Error;
+	if (!Subsystem->DeleteUserAsset(Selected, Error))
+	{
+		AttributeAssetList->SetStatus(Error, true);
+		return;
+	}
+	// The library reports the server result through HandleSyncStatus
+	AttributeAssetList->SetStatus(FString::Printf(TEXT("Deleted '%s' locally; removing it from the server..."), *Name));
 }
 
 void UAttributeRightPanelWidget::OnLayerChanged()
@@ -178,7 +223,7 @@ void UAttributeRightPanelWidget::ImportNextQueued()
 	ImportQueue.RemoveAt(0);
 
 	FString Error;
-	if (UAttributeAssetItem* Imported = Subsystem->ImportUserAsset(FilePath, ImportLayer, Error))
+	if (UAttributeAssetItem* Imported = Subsystem->ImportAndRegisterUserAsset(FilePath, ImportLayer, Error))
 	{
 		++ImportSucceeded;
 		LastImported = Imported;

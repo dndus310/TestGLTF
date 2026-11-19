@@ -65,9 +65,13 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Attribute")
 	TObjectPtr<UStaticMesh> RuntimeMesh;
 
-	/** Original file on disk (user imports only). */
+	/** File the mesh was loaded from (user imports only): the copy in Saved/UserAssets/Files once registered. */
 	UPROPERTY(BlueprintReadOnly, Category = "Attribute")
 	FString SourceFilePath;
+
+	/** UUserAssetLibrary entry id (user imports registered in the local manifest / server sync). */
+	UPROPERTY(BlueprintReadOnly, Category = "Attribute")
+	FString UserAssetId;
 
 	/** Cached thumbnail (texture asset, image file, or render target). */
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Attribute")
